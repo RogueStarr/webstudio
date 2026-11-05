@@ -25,7 +25,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 # Install essential runtime tools if needed
-RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+#RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
 
 # Copy built artifacts and necessary files from the builder stage
 COPY --from=builder /app/node_modules ./node_modules
