@@ -12,6 +12,7 @@ import {
   projectMeta,
   prop,
   instance,
+  presetStyleDecl,
   contentBlockDiagnostic,
 } from "@webstudio-is/sdk";
 import {
@@ -494,6 +495,7 @@ export const runtimeOutputSchemas = {
     ancestors: z.array(instanceSummary).optional(),
     props: z.array(prop).optional(),
     styles: z.array(declaration).optional(),
+    presetStyles: z.array(presetStyleDecl).optional(),
     children: z.array(instanceSummary).optional(),
     bindings: z.array(prop).optional(),
     sources: stringArray.optional(),
@@ -657,6 +659,8 @@ export const runtimeOutputSchemas = {
   "styles.deleteSelectedDeclarations": styleKeysResult,
   "styles.replaceValues": styleKeysResult,
   "designTokens.list": looseObject({ tokens: z.array(token), ...outputPage }),
+  "designTokens.copy": looseObject({ data: z.string() }),
+  "designTokens.paste": looseObject({ tokenId: id }),
   "designTokens.create": looseObject({ tokenIds: stringArray }),
   "designTokens.import": looseObject({
     plan: z.array(designTokenImportPlanEntrySchema),

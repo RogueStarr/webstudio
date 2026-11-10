@@ -44,6 +44,7 @@ import { $settings, type Settings } from "./shared/client-settings";
 import { builderUrl, getCanvasUrl } from "~/shared/router-utils";
 import { BlockingAlerts } from "./features/blocking-alerts";
 import { useSyncPageUrl } from "~/shared/pages";
+import { PreviewNavigationObserver } from "~/shared/pages/use-switch-page";
 import { useMount, useUnmount } from "~/shared/hook-utils/use-mount";
 import { subscribeCommands } from "~/builder/shared/commands";
 import { ProjectSettings } from "~/shared/project-settings";
@@ -417,6 +418,7 @@ export const Builder = (props: BuilderProps) => {
 
   return (
     <TooltipProvider>
+      {isPreviewMode && <PreviewNavigationObserver />}
       <div
         style={{ display: "contents" }}
         onPointerDown={inertHandlers.onPointerDown}
@@ -479,6 +481,7 @@ export const Builder = (props: BuilderProps) => {
                 bottom: 0,
                 width: 1,
                 background: cssVar("--border-default"),
+                zIndex: 1,
               },
             }}
           >

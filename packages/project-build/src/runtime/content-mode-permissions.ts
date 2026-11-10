@@ -459,7 +459,10 @@ const validatePropPatches = (
   }
   for (const patch of patches) {
     const [propId, field] = patch.path;
-    if (typeof propId !== "string") {
+    if (
+      typeof propId !== "string" ||
+      capabilities.reservedPropIds?.has(propId)
+    ) {
       return {
         success: false,
         error: "Prop patch is not editable in content mode.",
@@ -1076,16 +1079,17 @@ const validateEditableInstanceReachability = (
   return { success: true };
 };
 
-const validateEditableInstanceReferences = (
-  context: ContentModeTransactionContext
-): ContentModeValidationResult => {
+const countContentInstanceReferences = (
+  instances: Map<Instance["id"], Instance>,
+  contentRootIds: Set<Instance["id"]>
+) => {
   const referenceCounts = new Map<Instance["id"], number>();
   const visited = new Set<Instance["id"]>();
   const visit = (instanceId: Instance["id"]) => {
     if (visited.has(instanceId)) {
       return;
     }
-    const instance = context.capabilities.instances.get(instanceId);
+    const instance = instances.get(instanceId);
     if (
       instance === undefined ||
       instance.component === blockTemplateComponent
@@ -1105,13 +1109,55 @@ const validateEditableInstanceReferences = (
     }
   };
 
-  for (const rootId of context.capabilities.contentRootIds) {
+  for (const rootId of contentRootIds) {
     visit(rootId);
   }
+
+  return referenceCounts;
+};
+
+const hasInstancePath = (
+  instances: Map<Instance["id"], Instance>,
+  fromId: Instance["id"],
+  toId: Instance["id"]
+) => {
+  const visited = new Set<Instance["id"]>();
+  const pending = [fromId];
+  while (pending.length > 0) {
+    const instanceId = pending.pop()!;
+    if (instanceId === toId) {
+      return true;
+    }
+    if (visited.has(instanceId)) {
+      continue;
+    }
+    visited.add(instanceId);
+    for (const child of instances.get(instanceId)?.children ?? []) {
+      if (child.type === "id") {
+        pending.push(child.value);
+      }
+    }
+  }
+  return false;
+};
+
+const validateEditableInstanceReferences = (
+  context: ContentModeTransactionContext,
+  initialInstances: Map<Instance["id"], Instance>
+): ContentModeValidationResult => {
+  const initialReferenceCounts = countContentInstanceReferences(
+    initialInstances,
+    context.initialContentRootIds
+  );
+  const referenceCounts = countContentInstanceReferences(
+    context.capabilities.instances,
+    context.capabilities.contentRootIds
+  );
 
   for (const [instanceId, referenceCount] of referenceCounts) {
     if (
       referenceCount > 1 &&
+      referenceCount > (initialReferenceCounts.get(instanceId) ?? 0) &&
       (context.initialEditableInstanceIds.has(instanceId) ||
         context.addedInstanceIds.has(instanceId))
     ) {
@@ -1119,6 +1165,30 @@ const validateEditableInstanceReferences = (
         success: false,
         error: "Content instances must not be referenced multiple times.",
       };
+    }
+  }
+
+  for (const [instanceId, instance] of context.capabilities.instances) {
+    const initialChildren = initialInstances.get(instanceId)?.children;
+    if (instance.children === initialChildren) {
+      continue;
+    }
+    const initialChildIds = new Set(
+      initialChildren
+        ?.filter((child) => child.type === "id")
+        .map((child) => child.value)
+    );
+    for (const child of instance.children ?? []) {
+      if (
+        child.type === "id" &&
+        initialChildIds.has(child.value) === false &&
+        hasInstancePath(context.capabilities.instances, child.value, instanceId)
+      ) {
+        return {
+          success: false,
+          error: "Content instances must not contain cycles.",
+        };
+      }
     }
   }
 
@@ -1632,8 +1702,10 @@ export const applyContentModeTransaction = ({
   if (editableInstanceReachabilityResult.success === false) {
     return editableInstanceReachabilityResult;
   }
-  const editableInstanceReferencesResult =
-    validateEditableInstanceReferences(context);
+  const editableInstanceReferencesResult = validateEditableInstanceReferences(
+    context,
+    capabilities.instances
+  );
   if (editableInstanceReferencesResult.success === false) {
     return editableInstanceReferencesResult;
   }
@@ -1690,18 +1762,29 @@ export const applyContentModeTransaction = ({
   }
 
   if (
-    scope === "text-and-props" &&
     transaction.payload.some(
       ({ namespace, patches }) =>
         namespace === "instances" &&
-        patches.some(
-          ({ path }) =>
-            typeof path[0] !== "string" ||
+        patches.some(({ path }) => {
+          if (typeof path[0] !== "string") {
+            return scope === "text-and-props";
+          }
+          const before = capabilities.instances.get(path[0]);
+          const after = transactionCapabilities.instances.get(path[0]);
+          // CodeText can change literal text, but cannot add or replace a
+          // binding. Removing the whole content instance remains allowed.
+          const addsOrChangesBinding =
+            after?.component === "CodeText" &&
             !preservesNonTextChildren(
-              capabilities.instances.get(path[0])?.children,
-              transactionCapabilities.instances.get(path[0])?.children
-            )
-        )
+              before?.component === "CodeText" ? before.children : [],
+              after.children
+            );
+          return (
+            addsOrChangesBinding ||
+            (scope === "text-and-props" &&
+              !preservesNonTextChildren(before?.children, after?.children))
+          );
+        })
     )
   ) {
     return {

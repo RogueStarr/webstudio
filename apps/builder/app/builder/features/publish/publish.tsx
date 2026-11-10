@@ -266,19 +266,22 @@ const runPublishDiagnostics = async (
   projectId: Project["id"],
   domains?: string[]
 ) => {
+  const cssBuildWarningText =
+    "Some project styles cannot be processed for publishing. Publishing can continue using base and font styles.";
   const auditFindings = getPrePublishAuditFindings();
-  const diagnostics =
+  const validation =
     domains === undefined
-      ? await nativeClient.build.contentDatabasePublishDiagnostics.query({
+      ? undefined
+      : await nativeClient.api.publish.validate.query({
           projectId,
-        })
-      : (
-          await nativeClient.api.publish.validate.query({
-            projectId,
-            target: "staging",
-            domains,
-          })
-        ).diagnostics;
+          target: "staging",
+          domains,
+        });
+  const diagnostics =
+    validation?.diagnostics ??
+    (await nativeClient.build.contentDatabasePublishDiagnostics.query({
+      projectId,
+    }));
   const contentFindings = getContentDatabasePublishFindings(diagnostics).map(
     (finding) => ({
       ...finding,
@@ -290,7 +293,17 @@ const runPublishDiagnostics = async (
         ),
     })
   );
-  const findings = [...auditFindings, ...contentFindings];
+  const cssWarning =
+    validation?.cssValid === false
+      ? [
+          {
+            severity: "warning" as const,
+            title: cssBuildWarningText,
+            reportText: cssBuildWarningText,
+          },
+        ]
+      : [];
+  const findings = [...auditFindings, ...contentFindings, ...cssWarning];
   return {
     passed: findings.every(({ severity }) => severity !== "error"),
     findings,
@@ -783,7 +796,8 @@ const usePublishProgress = (projectId: Project["id"]) => {
 
 const waitForPublishStatus = async (
   refresh: () => Promise<Project | undefined>,
-  isCurrentProject: () => boolean
+  isCurrentProject: () => boolean,
+  previousBuildId?: string
 ) => {
   let sleepTime = 15000;
   const timeToFinish = Date.now() + PENDING_TIMEOUT + 2 * sleepTime;
@@ -794,7 +808,11 @@ const waitForPublishStatus = async (
       if (isCurrentProject() === false) {
         return;
       }
-      if (refreshedProject !== undefined) {
+      if (
+        refreshedProject !== undefined &&
+        (previousBuildId === undefined ||
+          refreshedProject.latestBuildVirtual?.buildId !== previousBuildId)
+      ) {
         const { statusText, status } =
           refreshedProject.latestBuildVirtual != null
             ? getPublishStatusAndText(refreshedProject.latestBuildVirtual)
@@ -1048,6 +1066,7 @@ const Publish = ({
   ]);
 
   const publish = async (domains: string[]) => {
+    const previousBuildId = $project.get()?.latestBuildVirtual?.buildId;
     const publishResult = await nativeClient.domain.publish.mutate({
       projectId: project.id,
       domains,
@@ -1101,7 +1120,8 @@ const Publish = ({
           projectId: project.id,
           isCurrent: isCurrentProject,
         }),
-      isCurrentProject
+      isCurrentProject,
+      previousBuildId
     );
     reportPublishResult({
       result,
@@ -1171,7 +1191,7 @@ const Publish = ({
     progress.start(() =>
       runPublishAfterBestEffortChecks({
         checks: async () => {
-          const checks = await runPublishDiagnostics(project.id);
+          const checks = await runPublishDiagnostics(project.id, domains);
           diagnostics.setFindings(checks.findings);
         },
         onCheckFailure: (error) => {
