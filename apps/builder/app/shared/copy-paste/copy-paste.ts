@@ -16,6 +16,7 @@ import { jsx } from "./plugin-jsx";
 import { markdown } from "./plugin-markdown";
 import { webflow } from "./plugin-webflow/plugin-webflow";
 import { designTokens } from "./plugin-design-tokens";
+import { token, copyTokenData } from "./plugin-token";
 import { builderApi } from "../builder-api";
 import { readClipboardText } from "../clipboard";
 import { $selectedInstance } from "../nano-states";
@@ -54,7 +55,7 @@ const isTextEditing = (event: ClipboardEvent) => {
  * # How to test:
  * 1. Focus on an input in the style panel (width, style source) or name input in settings. Select the text, then copy and paste any instance in the Navigator tree or on the Canvas.
  * 2. Edit text in a paragraph on the Canvas. Select text (single or multiple lines), then press Cmd+X. The paragraph should not be deleted.
- * 3. Select CSS preview text, then select an instance in the Navigator. Press Cmd+C, then Cmd+V.
+ * 3. Select text in a Builder panel, then select an instance in the Navigator. Press Cmd+C, then Cmd+V.
  **/
 const validateClipboardEvent = (event: ClipboardEvent) => {
   if (event.clipboardData === null) {
@@ -65,7 +66,7 @@ const validateClipboardEvent = (event: ClipboardEvent) => {
     return false;
   }
 
-  // Allows native selection of text in the Builder panels, such as CSS preview.
+  // Allows native selection of text in the Builder panels.
   if (event.type === "copy") {
     const isInBuilderContext = window.self === window.top;
     const selection = window.getSelection();
@@ -329,6 +330,7 @@ export const initCopyPaste = ({ signal }: { signal: AbortSignal }) => {
   initPlugins({
     plugins: [
       variableClipboard,
+      token,
       pageText,
       instanceJson,
       instanceText,
@@ -466,6 +468,16 @@ const writeClipboardText = async (
 // Public API for programmatic copy/paste/cut operations
 export const copyInstance = () => {
   return writeClipboardText(instanceText.onCopy?.());
+};
+
+export const copyToken = async (tokenId: string) =>
+  writeClipboardText(copyTokenData(tokenId));
+
+export const pasteToken = async (data: string) => {
+  const result = await token.onPaste?.(data);
+  if (result !== undefined) {
+    reportPasteResult(result);
+  }
 };
 
 export const copyPage = (pageId: string) => {

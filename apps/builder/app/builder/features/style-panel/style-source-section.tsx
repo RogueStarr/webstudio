@@ -4,9 +4,9 @@ import { computed } from "nanostores";
 import { pseudoClassesByTag } from "@webstudio-is/html-data";
 import { isPseudoElement } from "@webstudio-is/css-data";
 import {
+  type StyleDecl,
   type StyleSource,
   type StyleSourceToken,
-  type StyleDecl,
 } from "@webstudio-is/sdk";
 import { type RenameStyleSourceError } from "@webstudio-is/project-build/runtime";
 import { type ItemSource, StyleSourceInput } from "./style-source";
@@ -16,13 +16,13 @@ import {
   DeleteStyleSourceDialog,
   setStyleSourceLocked,
   deselectMatchingStyleSource,
+  selectStyleSource,
 } from "~/builder/shared/style-source-actions";
 import {
   $registeredComponentMetas,
   $selectedInstanceStatesByStyleSourceId,
   $selectedInstanceStyleSources,
   $selectedOrLastStyleSourceSelector,
-  $selectedStyleSources,
   $selectedStyleState,
 } from "~/shared/nano-states";
 import {
@@ -34,6 +34,8 @@ import { executeRuntimeMutation } from "~/shared/instance-utils/data";
 import { subscribe } from "~/shared/pubsub";
 import { $selectedInstance } from "~/shared/nano-states";
 import { $instanceTags } from "./shared/model";
+import { copyToken, pasteToken } from "~/shared/copy-paste/copy-paste";
+import { builderApi } from "~/shared/builder-api";
 
 // Declare command for this module
 declare module "~/shared/pubsub" {
@@ -41,20 +43,6 @@ declare module "~/shared/pubsub" {
     focusStyleSourceInput: undefined;
   }
 }
-
-const selectStyleSource = (
-  styleSourceId: StyleSource["id"],
-  state?: StyleDecl["state"]
-) => {
-  const instanceId = $selectedInstance.get()?.id;
-  if (instanceId === undefined) {
-    return;
-  }
-  const selectedStyleSources = new Map($selectedStyleSources.get());
-  selectedStyleSources.set(instanceId, styleSourceId);
-  $selectedStyleSources.set(selectedStyleSources);
-  $selectedStyleState.set(state);
-};
 
 const createStyleSource = (name: string) => {
   const instanceId = $selectedInstance.get()?.id;
@@ -381,6 +369,14 @@ export const StyleSourcesSection = () => {
             setEditingItem(newId);
           }
         }}
+        onCopyItem={(id) => {
+          copyToken(id).catch(() => {
+            builderApi.toast.error(
+              "Could not prepare the selected content for copying."
+            );
+          });
+        }}
+        onPasteToken={pasteToken}
         onConvertToToken={(id) => {
           convertLocalStyleSourceToToken(id);
           setEditingItem(id);

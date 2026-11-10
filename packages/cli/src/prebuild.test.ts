@@ -831,6 +831,267 @@ test("hydrates encoded filenames from an embedded SSG database", async () => {
 
 describe("prebuild", () => {
   test.each([true, false])(
+    "publishes escaped CSS properties through Lightning CSS (atomic: %s)",
+    async (atomicStyles) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const siteData = createSiteData();
+      siteData.build.pages.compiler = { atomicStyles };
+      siteData.build.breakpoints = [
+        ["base", { id: "base", label: "Base" }],
+      ] as never;
+      siteData.build.styleSources = [
+        ["source", { id: "source", type: "local" }],
+      ] as never;
+      siteData.build.styleSourceSelections = [
+        ["root", { instanceId: "root", values: ["source"] }],
+      ] as never;
+      siteData.build.styles = [
+        [
+          "source:base:invalid:",
+          {
+            styleSourceId: "source",
+            breakpointId: "base",
+            property:
+              "--pE--_WitxzZqY_3KruPxn-\\ \\>\\ \\.figma-block-translate",
+            value: { type: "unparsed", value: "none" },
+          },
+        ],
+        [
+          "source:base:color:",
+          {
+            styleSourceId: "source",
+            breakpointId: "base",
+            property: "color",
+            value: { type: "keyword", value: "red" },
+          },
+        ],
+      ] as never;
+      await writeSiteData(siteData);
+
+      await prebuild({ assets: false, template: ["react-router"] });
+
+      expect(warn).not.toHaveBeenCalled();
+      const css = await readFile("app/__generated__/index.css", "utf8");
+      expect(css).toContain("color: red");
+      expect(css).toContain("figma-block-translate");
+      await symlink(join(originalCwd, "node_modules"), "node_modules", "dir");
+      await runGeneratedCommand("react-router", ["build"]);
+      const cssFiles = (await readdir("build/client/assets")).filter((file) =>
+        file.endsWith(".css")
+      );
+      expect(cssFiles.length).toBeGreaterThan(0);
+      const bundledCss = await Promise.all(
+        cssFiles.map((file) => readFile(`build/client/assets/${file}`, "utf8"))
+      );
+      expect(
+        bundledCss.some((css) => css.includes("figma-block-translate"))
+      ).toBe(true);
+    },
+    30_000
+  );
+
+  test.each(["react-router", "ssg"] as const)(
+    "publishes when a generated CSS rule is malformed (%s)",
+    async (template) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const siteData = createSiteData();
+      siteData.build.breakpoints = [
+        ["base", { id: "base", label: "Base" }],
+      ] as never;
+      siteData.build.styleSources = [
+        ["source", { id: "source", type: "local" }],
+      ] as never;
+      siteData.build.styleSourceSelections = [
+        ["root", { instanceId: "root", values: ["source"] }],
+      ] as never;
+      siteData.build.styles = [
+        [
+          "source:base:color:bad-state",
+          {
+            styleSourceId: "source",
+            breakpointId: "base",
+            state: "/*",
+            property: "color",
+            value: { type: "keyword", value: "red" },
+          },
+        ],
+      ] as never;
+      await writeSiteData(siteData);
+
+      await prebuild({ assets: false, template: [template] });
+
+      expect(
+        warn.mock.calls.map(([value]) => JSON.parse(String(value)))
+      ).toContainEqual(
+        expect.objectContaining({
+          type: "webstudio-build-warning",
+          code: "invalid-generated-css",
+          severity: "warning",
+        })
+      );
+      await symlink(join(originalCwd, "node_modules"), "node_modules", "dir");
+      const css = await readFile("app/__generated__/index.css", "utf8");
+      expect(css).not.toContain("/*");
+      if (template === "ssg") {
+        await prerenderSsg();
+      } else {
+        await runGeneratedCommand("react-router", ["build"]);
+        expect(
+          (await readdir("build/client/assets")).some((file) =>
+            file.endsWith(".css")
+          )
+        ).toBe(true);
+      }
+    },
+    60_000
+  );
+
+  test("skips a recovered malformed declaration without dropping valid styles", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const siteData = createSiteData();
+    siteData.build.breakpoints = [
+      ["base", { id: "base", label: "Base" }],
+    ] as never;
+    siteData.build.styleSources = [
+      ["source", { id: "source", type: "local" }],
+    ] as never;
+    siteData.build.styleSourceSelections = [
+      ["root", { instanceId: "root", values: ["source"] }],
+    ] as never;
+    siteData.build.styles = [
+      [
+        "source:base:color:",
+        {
+          styleSourceId: "source",
+          breakpointId: "base",
+          property: "color",
+          value: { type: "unparsed", value: "rgb(1, 2, 3" },
+        },
+      ],
+      [
+        "source:base:backgroundColor:",
+        {
+          styleSourceId: "source",
+          breakpointId: "base",
+          property: "backgroundColor",
+          value: { type: "keyword", value: "red" },
+        },
+      ],
+    ] as never;
+    await writeSiteData(siteData);
+
+    await prebuild({ assets: false, template: ["defaults"] });
+
+    expect(await readFile("app/__generated__/index.css", "utf8")).toContain(
+      "background-color: red"
+    );
+    expect(
+      warn.mock.calls.map(([value]) => JSON.parse(String(value)).code)
+    ).toContain("invalid-css-declaration");
+    expect(
+      warn.mock.calls.map(([value]) => JSON.parse(String(value)).code)
+    ).not.toContain("invalid-generated-css");
+  });
+
+  test("links generated CSS in prerendered SSG output", async () => {
+    const siteData = createSiteData();
+    siteData.build.breakpoints = [
+      ["base", { id: "base", label: "Base" }],
+    ] as never;
+    siteData.build.styleSources = [
+      ["source", { id: "source", type: "local" }],
+    ] as never;
+    siteData.build.styleSourceSelections = [
+      ["root", { instanceId: "root", values: ["source"] }],
+    ] as never;
+    siteData.build.styles = [
+      [
+        "source:base:color:",
+        {
+          styleSourceId: "source",
+          breakpointId: "base",
+          property: "color",
+          value: { type: "keyword", value: "red" },
+        },
+      ],
+    ] as never;
+    await writeSiteData(siteData);
+
+    await prebuild({ assets: false, template: ["ssg"] });
+    await expect(
+      readFile("app/__generated__/index.css", "utf8")
+    ).resolves.toContain("color: red");
+    await symlink(join(originalCwd, "node_modules"), "node_modules", "dir");
+    await prerenderSsg();
+
+    const html = parseHtml(await readFile("dist/client/index.html", "utf8"));
+    const stylesheets = findElementsByTagName(html, "link")
+      .filter((element) =>
+        element.attrs.some(
+          ({ name, value }) => name === "rel" && value === "stylesheet"
+        )
+      )
+      .map(
+        (element) => element.attrs.find(({ name }) => name === "href")?.value
+      );
+    expect(stylesheets).toHaveLength(1);
+    const stylesheet = stylesheets[0];
+    expect(stylesheet).toMatch(/^\/assets\/static\/.*\.css$/);
+    await expect(
+      readFile(`dist/client${stylesheet}`, "utf8")
+    ).resolves.toContain("red");
+  }, 60_000);
+
+  test("builds the Cloudflare Remix site with the escaped property", async () => {
+    const siteData = createSiteData();
+    siteData.build.breakpoints = [
+      ["base", { id: "base", label: "Base" }],
+    ] as never;
+    siteData.build.styleSources = [
+      ["source", { id: "source", type: "local" }],
+    ] as never;
+    siteData.build.styleSourceSelections = [
+      ["root", { instanceId: "root", values: ["source"] }],
+    ] as never;
+    siteData.build.styles = [
+      [
+        "source:base:escaped:",
+        {
+          styleSourceId: "source",
+          breakpointId: "base",
+          property: "--pE--_WitxzZqY_3KruPxn-\\ \\>\\ \\.figma-block-translate",
+          value: { type: "unparsed", value: "none" },
+        },
+      ],
+    ] as never;
+    await writeSiteData(siteData);
+    await prebuild({ assets: false, template: ["defaults", "cloudflare"] });
+    await symlink(join(originalCwd, "node_modules"), "node_modules", "dir");
+    const viteConfig = await readFile("vite.config.ts", "utf8");
+    await writeFile(
+      "vite.config.ts",
+      viteConfig
+        .replaceAll(
+          'conditions: ["browser", "development|production"]',
+          'conditions: ["webstudio", "browser", "development|production"]'
+        )
+        .replaceAll(
+          'conditions: ["node", "development|production"]',
+          'conditions: ["webstudio", "node", "development|production"]'
+        )
+    );
+    await runGeneratedCommand("remix", ["vite:build"]);
+    const cssFiles = (await readdir("build/client/assets")).filter((file) =>
+      file.endsWith(".css")
+    );
+    const bundledCss = await Promise.all(
+      cssFiles.map((file) => readFile(`build/client/assets/${file}`, "utf8"))
+    );
+    expect(
+      bundledCss.some((css) => css.includes("figma-block-translate"))
+    ).toBe(true);
+  }, 60_000);
+  test.each([true, false])(
     "imports managed Form formatting only when used (%s)",
     async (hasErrors) => {
       const siteData = createSiteData({
@@ -2271,6 +2532,36 @@ describe("prebuild", () => {
     await expect(readFile("app/routes/custom.tsx", "utf8")).resolves.toBe(
       "custom"
     );
+
+    const oldCss = await readFile("app/__generated__/index.css", "utf8");
+    siteData.build.breakpoints = [
+      ["base", { id: "base", label: "Base" }],
+    ] as never;
+    siteData.build.styleSources = [
+      ["source", { id: "source", type: "local" }],
+    ] as never;
+    siteData.build.styleSourceSelections = [
+      ["root", { instanceId: "root", values: ["source"] }],
+    ] as never;
+    siteData.build.styles = [
+      [
+        "source:base:color:",
+        {
+          styleSourceId: "source",
+          breakpointId: "base",
+          property: "color",
+          value: { type: "keyword", value: "red" },
+        },
+      ],
+    ] as never;
+    await writeSiteData(siteData);
+    await prebuild({
+      assets: false,
+      template: ["react-router"],
+      incremental: true,
+    });
+    const css = await readFile("app/__generated__/index.css", "utf8");
+    expect(css).not.toBe(oldCss);
   });
 
   test("rejects generated manifests that point outside owned output", async () => {
@@ -2503,6 +2794,9 @@ sitemap.map((page) => page.path);`
         },
       ])
     );
+    await expect(
+      readFile("app/__generated__/$resources.has-redirects.ts", "utf8")
+    ).resolves.toBe("export const hasRedirects = true;");
 
     const assetsModule = await readFile(
       "app/__generated__/$resources.assets.ts",
@@ -2545,6 +2839,15 @@ sitemap.map((page) => page.path);`
         expect.stringContaining("über"),
       ])
     );
+  });
+
+  test("emits a false redirect flag when a project has no redirects", async () => {
+    await writeSiteData(createSiteData({ redirects: [] }));
+    await prebuild({ assets: false, template: ["defaults"] });
+
+    await expect(
+      readFile("app/__generated__/$resources.has-redirects.ts", "utf8")
+    ).resolves.toBe("export const hasRedirects = false;");
   });
 
   test("selects react-router templates", async () => {
@@ -5670,7 +5973,7 @@ export const createManagedFormResourceFetch = () => {
   );
 
   test.each(["defaults", "react-router"])(
-    "retries only a failed managed Form destination per submission (%s)",
+    "reports partial managed Form failure without replaying POST destinations and recovers on resubmit (%s)",
     async (template) => {
       const siteData = createSiteData({
         instances: [
@@ -5784,7 +6087,7 @@ export const createManagedFormResourceFetch = () => {
         pathToFileURL(join(tempDir, "retry-action.mjs")).href
       );
       const attempts = new Map<string, number>();
-      let failure: "status" | "network" | "timeout" | "persistent" = "status";
+      let failure: "status" | "network" | "timeout" | "persistent" | undefined;
       vi.stubGlobal(
         "__testManagedFormFetch",
         vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -5803,7 +6106,7 @@ export const createManagedFormResourceFetch = () => {
           if (failure === "persistent") {
             return new Response("Still failed", { status: 422 });
           }
-          if (attempt === 1) {
+          if (failure !== undefined && attempt === 1) {
             if (failure === "status") {
               return new Response("Temporary failure", { status: 503 });
             }
@@ -5836,117 +6139,81 @@ export const createManagedFormResourceFetch = () => {
           context: {},
         });
       };
-      const expectAttempts = (failed: number) => {
-        expect(attempts.get("https://receiver.example/dependency")).toBe(1);
-        expect(attempts.get("https://receiver.example/sibling")).toBe(1);
+      const expectAttempts = (count: number) => {
+        expect(attempts.get("https://receiver.example/dependency")).toBe(count);
+        expect(attempts.get("https://receiver.example/sibling")).toBe(count);
         expect(attempts.get("https://receiver.example/failed/resolved")).toBe(
-          failed
+          count
         );
       };
-
-      await expect(submit()).resolves.toEqual({
-        success: true,
+      const siblingResult = {
+        resourceId: "sibling",
+        resourceName: expect.any(String),
         status: 200,
-        results: [
-          {
-            resourceId: "sibling",
-            resourceName: expect.any(String),
-            status: 200,
-            body: { accepted: true },
-          },
-          {
-            resourceId: "failed",
-            resourceName: expect.any(String),
-            status: 200,
-            body: { accepted: true },
-          },
-        ],
-        errors: [],
-      });
-      expectAttempts(2);
-      attempts.clear();
-      failure = "network";
+        body: { accepted: true },
+      };
       const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
-      await expect(submit()).resolves.toMatchObject({
-        success: true,
-        status: 200,
-        results: [
+      try {
+        for (const outcome of [
+          { failure: "status", status: 503, body: "Temporary failure" },
           {
-            resourceId: "sibling",
-            resourceName: expect.any(String),
-            status: 200,
-            body: { accepted: true },
+            failure: "network",
+            status: 502,
+            body: { error: { code: "NETWORK_ERROR" } },
           },
           {
+            failure: "timeout",
+            status: 504,
+            body: { error: { code: "REQUEST_TIMEOUT" } },
+          },
+          { failure: "persistent", status: 422, body: "Still failed" },
+        ] as const) {
+          attempts.clear();
+          failure = outcome.failure;
+          if (failure === "timeout") {
+            vi.useFakeTimers();
+          }
+          const failedResult = {
             resourceId: "failed",
             resourceName: expect.any(String),
+            status: outcome.status,
+            body: outcome.body,
+          };
+          const pending = submit();
+          if (failure === "timeout") {
+            await vi.advanceTimersByTimeAsync(10_000);
+          }
+          await expect(pending).resolves.toMatchObject({
+            success: false,
+            status: 502,
+            results: [siblingResult, failedResult],
+            errors: [failedResult],
+          });
+          expectAttempts(1);
+
+          // A new submission dispatches each destination once, including the sibling.
+          failure = undefined;
+          await expect(submit()).resolves.toEqual({
+            success: true,
             status: 200,
-            body: { accepted: true },
-          },
-        ],
-        errors: [],
-      });
-      expectAttempts(2);
-      errorLog.mockRestore();
-      attempts.clear();
-      failure = "timeout";
-      vi.useFakeTimers();
-      try {
-        const pending = submit();
-        await vi.advanceTimersByTimeAsync(10_000);
-        await expect(pending).resolves.toMatchObject({
-          success: true,
-          status: 200,
-          results: [
-            {
-              resourceId: "sibling",
-              resourceName: expect.any(String),
-              status: 200,
-              body: { accepted: true },
-            },
-            {
-              resourceId: "failed",
-              resourceName: expect.any(String),
-              status: 200,
-              body: { accepted: true },
-            },
-          ],
-          errors: [],
-        });
-        expectAttempts(2);
+            results: [
+              siblingResult,
+              {
+                resourceId: "failed",
+                resourceName: expect.any(String),
+                status: 200,
+                body: { accepted: true },
+              },
+            ],
+            errors: [],
+          });
+          expectAttempts(2);
+          vi.useRealTimers();
+        }
       } finally {
         vi.useRealTimers();
+        errorLog.mockRestore();
       }
-      attempts.clear();
-      failure = "persistent";
-      await expect(submit()).resolves.toEqual({
-        success: false,
-        status: 502,
-        results: [
-          {
-            resourceId: "sibling",
-            resourceName: expect.any(String),
-            status: 200,
-            body: { accepted: true },
-          },
-          {
-            resourceId: "failed",
-            resourceName: expect.any(String),
-            status: 422,
-            body: "Still failed",
-          },
-        ],
-        errors: [
-          {
-            resourceId: "failed",
-            resourceName: expect.any(String),
-            status: 422,
-            body: "Still failed",
-            message: "Resource request failed (422)",
-          },
-        ],
-      });
-      expectAttempts(2);
     }
   );
 
