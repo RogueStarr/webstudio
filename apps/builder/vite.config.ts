@@ -1,7 +1,6 @@
 import path, { resolve } from "node:path";
 import { defineConfig, loadEnv, type CorsOptions } from "vite";
 import { vitePlugin as remix } from "@remix-run/dev";
-import { vercelPreset } from "@vercel/remix/vite";
 import type { IncomingMessage } from "node:http";
 import pc from "picocolors";
 
@@ -41,7 +40,6 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       remix({
-        presets: [vercelPreset()],
         future: {
           v3_lazyRouteDiscovery: false,
           v3_relativeSplatPath: false,
@@ -54,11 +52,6 @@ export default defineConfig(({ mode }) => {
         name: "request-timing-logger",
         configureServer(server) {
           server.middlewares.use((req, res, next) => {
-            // Some dev proxies can forward HTTP/2 pseudo-headers such as
-            // ":method". Remix converts Node headers to Fetch Headers, where
-            // those names are invalid and crash before the request reaches app
-            // code. Vite still needs a normal req.url, so preserve ":path"
-            // before removing the pseudo-headers.
             if (req.url === undefined) {
               const path = req.headers[":path"];
               if (typeof path === "string") {
@@ -70,11 +63,6 @@ export default defineConfig(({ mode }) => {
                 delete req.headers[header];
               }
             }
-            // Pre-bundled dep chunks must never be served from a stale browser
-            // cache. Vite uses ?v= to bust the cache, but some browsers (or
-            // service workers) still serve cached chunks with old hashes,
-            // causing duplicate-React errors during hydration. no-store removes
-            // the files from the browser cache entirely.
             if (req.url?.includes("/node_modules/.vite/deps/")) {
               res.setHeader("Cache-Control", "no-store");
             }
@@ -105,17 +93,10 @@ export default defineConfig(({ mode }) => {
           find: "~",
           replacement: resolve("app"),
         },
-
-        // before 2,899.74 kB, after 2,145.98 kB
         {
           find: "@supabase/node-fetch",
           replacement: resolve("./app/shared/empty.ts"),
         },
-
-        // rolldown resolves tslib to its CJS build (our resolve.conditions
-        // omit "module") and the generated interop leaves `default`
-        // undefined, crashing the server bundle at boot. Point it at the
-        // ESM build instead.
         {
           find: /^tslib$/,
           replacement: "tslib/tslib.es6.mjs",
@@ -136,7 +117,6 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      // Service-to-service OAuth token call requires a specified host for the wstd.dev domain
       host: "wstd.dev",
       proxy: {
         "/collab-relay": {
@@ -152,12 +132,10 @@ export default defineConfig(({ mode }) => {
         req: IncomingMessage,
         callback: (error: Error | null, options: CorsOptions | null) => void
       ) => {
-        // Handle CORS preflight requests in development to mimic Remix production behavior
         if (req.method === "OPTIONS" || req.method === "POST") {
           if (req.headers.origin != null && req.url != null) {
             const url = new URL(req.url, `https://${req.headers.host}`);
 
-            // Allow CORS for /builder-logout path when requested from the authorization server
             if (url.pathname === "/builder-logout" && isBuilderUrl(url.href)) {
               return callback(null, {
                 origin: getAuthorizationServerOrigin(url.href),
@@ -168,7 +146,6 @@ export default defineConfig(({ mode }) => {
           }
 
           if (req.method === "OPTIONS") {
-            // Respond with method not allowed for other preflight requests
             return callback(null, {
               preflightContinue: false,
               optionsSuccessStatus: 405,
@@ -176,7 +153,6 @@ export default defineConfig(({ mode }) => {
           }
         }
 
-        // Disable CORS for all other requests
         return callback(null, {
           origin: false,
         });
