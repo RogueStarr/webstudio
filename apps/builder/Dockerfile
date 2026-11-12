@@ -26,9 +26,11 @@ RUN corepack enable && corepack prepare pnpm@9.14.4 --activate
 # Copy built dependencies, workspace packages, and the compiled Remix app output
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/packages ./packages
+COPY --from=builder /app/apps/builder/node_modules ./apps/builder/node_modules
 COPY --from=builder /app/apps/builder/package.json ./apps/builder/package.json
 COPY --from=builder /app/apps/builder/build ./apps/builder/build
 COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
 
 WORKDIR /app/apps/builder
 
