@@ -26,6 +26,7 @@ COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/apps/builder/node_modules ./apps/builder/node_modules
 COPY --from=builder /app/apps/builder/package.json ./apps/builder/package.json
 COPY --from=builder /app/apps/builder/build ./apps/builder/build
+COPY --from=builder /app/apps/builder/server.mjs ./apps/builder/server.mjs
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
 
@@ -33,4 +34,4 @@ WORKDIR /app/apps/builder
 
 EXPOSE 3000
 
-CMD ["pnpm", "start"]
+CMD ["node", "server.mjs"]
